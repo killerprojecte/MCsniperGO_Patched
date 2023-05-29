@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -108,7 +107,6 @@ func snipeCommand(targetName string, offset float64) error {
 
 	changeTime := droptime.Add(time.Millisecond * time.Duration(0-offset))
 
-	var wg sync.WaitGroup
 	var resps []mcgo.NameChangeReturn
 
 	for time.Now().Before(changeTime.Add(-time.Second * 20)) {
@@ -121,83 +119,63 @@ func snipeCommand(targetName string, offset float64) error {
 
 	// snipe
 	for _, acc := range authedAccounts {
-		for i := 0; i < func() int {
-			if acc.Type == mcgo.MsPr {
-				return config.Sniper.PrenameRequests
-			} else {
-				return config.Sniper.SnipeRequests
-			}
-		}(); i++ {
-			wg.Add(1)
+		for {
 			go func(acc *mcgo.MCaccount) {
-				defer wg.Done()
 				resp, err := acc.ChangeName(targetName, changeTime.Add(time.Millisecond*time.Duration(float64(totalReqCount)*config.Sniper.Spread)), acc.Type == mcgo.MsPr)
 
 				if err != nil {
 					log("error", "encountered err on nc for %v: %v", acc.Email, err.Error())
 				} else {
-					resps = append(resps, resp)
+					log(
+						"info", "[%v] sent @ %v | recv @ %v | %v",
+						prettyStatus(resp.StatusCode),
+						fmtTimestamp(resp.SendTime),
+						fmtTimestamp(resp.ReceiveTime),
+						accID(&resp.Account),
+					)
+
+					logsSlice := []string{
+						"accounts",
+					}
+
+					logsSlice = append(logsSlice, fmt.Sprintf(
+						"[%v] sent @ %v | recv @ %v | %v",
+						resp.StatusCode,
+						fmtTimestamp(resp.SendTime),
+						fmtTimestamp(resp.ReceiveTime),
+						accID(&resp.Account),
+					))
+
+					if resp.StatusCode < 300 {
+
+						log("success", "sniped %v onto %v", resp.Username, resp.Account.Email)
+						log("info", "if you like this sniper please consider donating @ <fg=green;op=underscore>https://mcsniperpy.com/donate</>")
+
+						if config.Announce.McsnipergoAnnounceCode != "" {
+							err := announceSnipe(targetName, config.Announce.McsnipergoAnnounceCode, &resp.Account)
+
+							if err != nil {
+								log("error", "failed to announce snipe: %v", err)
+							} else {
+								log("success", "announced snipe!")
+							}
+						}
+
+						if config.Announce.WebhookURL != "" {
+							err := customServerAnnounce(targetName)
+							if err != nil {
+								log("error", "failed to announce snipe to your webhook: %v", err)
+							} else {
+								log("succes", "announced your snipe!")
+							}
+						}
+					}
 				}
 
 				totalReqCount++
 
 			}(acc)
-		}
-		time.Sleep(time.Millisecond * 1)
-	}
-
-	wg.Wait()
-
-	logsSlice := []string{
-		"accounts",
-	}
-
-	for _, acc := range accounts {
-		logsSlice = append(logsSlice, formatAccount(acc))
-	}
-
-	logsSlice = append(logsSlice, fmt.Sprintf("offset = %v\nlogs", offset))
-
-	for _, resp := range resps {
-		log(
-			"info", "[%v] sent @ %v | recv @ %v | %v",
-			prettyStatus(resp.StatusCode),
-			fmtTimestamp(resp.SendTime),
-			fmtTimestamp(resp.ReceiveTime),
-			accID(&resp.Account),
-		)
-
-		logsSlice = append(logsSlice, fmt.Sprintf(
-			"[%v] sent @ %v | recv @ %v | %v",
-			resp.StatusCode,
-			fmtTimestamp(resp.SendTime),
-			fmtTimestamp(resp.ReceiveTime),
-			accID(&resp.Account),
-		))
-
-		if resp.StatusCode < 300 {
-
-			log("success", "sniped %v onto %v", resp.Username, resp.Account.Email)
-			log("info", "if you like this sniper please consider donating @ <fg=green;op=underscore>https://mcsniperpy.com/donate</>")
-
-			if config.Announce.McsnipergoAnnounceCode != "" {
-				err := announceSnipe(targetName, config.Announce.McsnipergoAnnounceCode, &resp.Account)
-
-				if err != nil {
-					log("error", "failed to announce snipe: %v", err)
-				} else {
-					log("success", "announced snipe!")
-				}
-			}
-
-			if config.Announce.WebhookURL != "" {
-				err := customServerAnnounce(targetName)
-				if err != nil {
-					log("error", "failed to announce snipe to your webhook: %v", err)
-				} else {
-					log("succes", "announced your snipe!")
-				}
-			}
+			time.Sleep(time.Second * 20)
 		}
 	}
 
@@ -231,8 +209,6 @@ func snipeCommand(targetName string, offset float64) error {
 	}
 
 	defer logFile.Close()
-
-	logFile.WriteString(strings.Join(logsSlice, "\n"))
 
 	return nil
 }
